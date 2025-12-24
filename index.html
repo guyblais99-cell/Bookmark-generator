@@ -1,0 +1,746 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D Bookmark Creator - v5.4 (UI Tweak)</title>
+    <style>
+        body { margin: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; overflow: hidden; background-color: #1a1a1a; color: #eee; }
+        
+        /* Layout */
+        #sidebar {
+            position: absolute; top: 0; left: 0; width: 340px; height: 100vh;
+            background: #252525; display: flex; flex-direction: column;
+            box-shadow: 2px 0 10px rgba(0,0,0,0.5); z-index: 10;
+        }
+        #scroll-container {
+            flex: 1; overflow-y: auto; padding: 20px;
+        }
+        #viewport { width: 100vw; height: 100vh; position: absolute; top: 0; left: 0; padding-left: 340px; box-sizing: border-box;}
+        
+        /* UI Elements */
+        h2 { margin-top: 0; font-size: 1.2rem; color: #4db8ff; border-bottom: 1px solid #444; padding-bottom: 10px; }
+        h3 { font-size: 0.9rem; text-transform: uppercase; color: #888; margin-top: 25px; margin-bottom: 5px; }
+        
+        .control-group { margin-bottom: 12px; }
+        label { display: block; font-size: 0.8rem; margin-bottom: 4px; color: #ccc; }
+        
+        input[type="range"] { width: 100%; cursor: pointer; }
+        input[type="number"], select { 
+            width: 100%; padding: 6px; background: #333; border: 1px solid #444; 
+            color: #fff; border-radius: 4px; box-sizing: border-box; font-size: 0.9rem;
+        }
+        input[type="file"] { font-size: 0.8rem; width: 100%; }
+        input[type="checkbox"] { transform: scale(1.2); cursor: pointer; }
+        
+        button {
+            width: 100%; padding: 12px; background: #4db8ff; color: #000; font-weight: bold;
+            border: none; border-radius: 4px; cursor: pointer; margin-top: 10px;
+            transition: background 0.2s;
+        }
+        button:hover { background: #2691d9; }
+        
+        /* Editor Canvas */
+        #cropContainer {
+            width: 100%; aspect-ratio: 1/1; background: #000;
+            border: 1px solid #444; margin-bottom: 10px;
+            cursor: move; position: relative; overflow: hidden;
+        }
+        canvas#cropCanvas { width: 100%; height: 100%; display: block; }
+
+        .info-box {
+            background: #333; padding: 10px; border-radius: 4px; margin-top: 15px;
+            border-left: 4px solid #ffcc00; font-size: 0.8rem; line-height: 1.4;
+        }
+        .highlight { color: #ffcc00; font-weight: bold; }
+
+        /* Loading Overlay */
+        #loading {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.8); display: none; justify-content: center; align-items: center;
+            z-index: 20; flex-direction: column;
+        }
+        .spinner {
+            border: 4px solid #f3f3f3; border-top: 4px solid #3498db; border-radius: 50%;
+            width: 40px; height: 40px; animation: spin 1s linear infinite;
+        }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    </style>
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/exporters/STLExporter.js"></script>
+</head>
+<body>
+
+<div id="loading">
+    <div class="spinner"></div>
+    <p style="margin-top:10px; color:white;">Generating Model...</p>
+</div>
+
+<div id="sidebar">
+    <div id="scroll-container">
+        <h2>Bookmark Creator v5.4</h2>
+        
+        <div class="control-group">
+            <label>1. Upload Image</label>
+            <input type="file" id="imageInput" accept="image/*">
+        </div>
+
+        <h3>2. Image Mode</h3>
+        <div class="control-group">
+            <label style="display:inline-block;">Invert Colors</label>
+            <input type="checkbox" id="invertInput" style="width:auto; float:right;">
+        </div>
+
+        <h3>3. Crop & Contrast</h3>
+        <p style="font-size:0.75rem; color:#888; margin-bottom:10px;">
+            White = High Relief, Black = Low.
+        </p>
+        <div id="cropContainer">
+            <canvas id="cropCanvas"></canvas>
+        </div>
+        <div class="control-group">
+            <label>Crop Zoom Level</label>
+            <input type="range" id="cropZoomInput" min="10" max="100" value="100">
+        </div>
+        
+        <div class="control-group">
+            <label>Contrast</label>
+            <input type="range" id="contrastInput" min="0" max="300" value="100">
+        </div>
+
+        <h3>4. Dimensions & Shape</h3>
+        <div class="control-group">
+            <label>Shape</label>
+            <select id="shapeSelect">
+                <option value="rect">Rectangle</option>
+                <option value="circle">Circle / Tag</option>
+            </select>
+        </div>
+
+        <div class="control-group" id="radiusGroup">
+            <label>Corner Radius (mm)</label>
+            <input type="range" id="radiusInput" min="0" max="20" value="0" step="1">
+        </div>
+        
+        <div class="control-group" style="margin-top:10px; padding-top:10px; border-top:1px solid #444;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                <label style="margin:0; font-weight:bold; color:#fff;">Add Lanyard Hole</label>
+                <input type="checkbox" id="holeCheck">
+            </div>
+            <div id="holeSizeGroup" style="display:none;">
+                <label>Hole Size (mm)</label>
+                <input type="range" id="holeSizeInput" min="2" max="10" value="4" step="0.5">
+            </div>
+        </div>
+
+        <div style="display:flex; gap:10px; margin-top:10px;">
+            <div class="control-group" style="flex:1">
+                <label>Width (mm)</label>
+                <input type="number" id="widthInput" value="40">
+            </div>
+            <div class="control-group" style="flex:1">
+                <label>Height (mm)</label>
+                <input type="number" id="heightInput" value="120">
+            </div>
+        </div>
+
+        <div style="display:flex; gap:10px;">
+            <div class="control-group" style="flex:1">
+                <label>Base Height</label>
+                <input type="number" id="baseThickInput" value="0.8" step="0.2">
+            </div>
+            <div class="control-group" style="flex:1">
+                <label>Bump Height</label>
+                <input type="number" id="bumpThickInput" value="0.8" step="0.1">
+            </div>
+        </div>
+
+        <h3>Printing Info</h3>
+        <div class="control-group">
+            <label>Layer Height (mm)</label>
+            <input type="number" id="layerHeightInput" value="0.08" step="0.01">
+        </div>
+
+        <div class="info-box" id="printInfo">
+            Upload an image to start.
+        </div>
+
+        <button id="exportBtn">Export STL</button>
+    </div>
+</div>
+
+<div id="viewport"></div>
+
+<script>
+    // --- Global Variables ---
+    let scene, camera, renderer, controls, exporter;
+    let mainMesh = null;
+    
+    let sourceImage = null; 
+    let canvasData = null;      
+    let cropCanvas, cropCtx;
+    
+    let cropState = { x: 0, y: 0, w: 0, h: 0 };
+    let isDragging = false;
+    let dragStart = { x: 0, y: 0 };
+    let cropStart = { x: 0, y: 0 };
+
+    const MESH_RESOLUTION = 300; 
+
+    function init() {
+        init3D();
+        init2DEditor();
+        setupListeners();
+        updateGeometry(); 
+        animate();
+    }
+
+    function init3D() {
+        scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x333333);
+        
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+        scene.add(ambientLight);
+        const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+        dirLight.position.set(50, 50, 100);
+        scene.add(dirLight);
+
+        camera = new THREE.PerspectiveCamera(45, (window.innerWidth-340) / window.innerHeight, 0.1, 1000);
+        camera.position.set(0, -100, 150);
+
+        renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth - 340, window.innerHeight);
+        document.getElementById('viewport').appendChild(renderer.domElement);
+
+        controls = new THREE.OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+
+        exporter = new THREE.STLExporter();
+    }
+
+    function init2DEditor() {
+        cropCanvas = document.getElementById('cropCanvas');
+        cropCtx = cropCanvas.getContext('2d');
+        cropCanvas.width = 600;
+        cropCanvas.height = 600;
+    }
+
+    function setupListeners() {
+        window.addEventListener('resize', onWindowResize);
+
+        document.getElementById('imageInput').addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = function(event) {
+                const img = new Image();
+                img.onload = function() {
+                    sourceImage = img;
+                    resetCrop(); 
+                    drawEditor();
+                    processCropAndGen();
+                };
+                img.src = event.target.result;
+            };
+            reader.readAsDataURL(file);
+        });
+
+        cropCanvas.addEventListener('mousedown', onMouseDown);
+        cropCanvas.addEventListener('mousemove', onMouseMove);
+        window.addEventListener('mouseup', onMouseUp);
+
+        cropCanvas.addEventListener('touchstart', (e) => { e.preventDefault(); onMouseDown(e.touches[0]); }, {passive: false});
+        cropCanvas.addEventListener('touchmove', (e) => { e.preventDefault(); onMouseMove(e.touches[0]); }, {passive: false});
+        window.addEventListener('touchend', onMouseUp);
+
+        ['widthInput', 'heightInput', 'shapeSelect', 'cropZoomInput', 'radiusInput', 'holeCheck', 'holeSizeInput'].forEach(id => {
+            document.getElementById(id).addEventListener('input', () => {
+                const shape = document.getElementById('shapeSelect').value;
+                const radGroup = document.getElementById('radiusGroup');
+                radGroup.style.display = (shape === 'circle') ? 'none' : 'block';
+
+                const hasHole = document.getElementById('holeCheck').checked;
+                document.getElementById('holeSizeGroup').style.display = hasHole ? 'block' : 'none';
+
+                recalcCropRect(); 
+                drawEditor();
+                processCropAndGen();
+            });
+        });
+
+        ['baseThickInput', 'bumpThickInput'].forEach(id => {
+            document.getElementById(id).addEventListener('input', () => {
+                processCropAndGen(); 
+            });
+        });
+
+        ['contrastInput', 'invertInput'].forEach(id => {
+            document.getElementById(id).addEventListener('input', () => {
+                drawEditor();
+                clearTimeout(window.updateTimer);
+                window.updateTimer = setTimeout(processCropAndGen, 100);
+            });
+        });
+
+        document.getElementById('layerHeightInput').addEventListener('input', updatePrintInfo);
+        document.getElementById('exportBtn').addEventListener('click', exportSTL);
+    }
+
+    // --- 2D Editor (Visualization) ---
+
+    function resetCrop() {
+        if(!sourceImage) return;
+        document.getElementById('cropZoomInput').value = 100;
+        recalcCropRect(true);
+    }
+
+    function recalcCropRect(center = false) {
+        if(!sourceImage) return;
+
+        const physW = parseFloat(document.getElementById('widthInput').value);
+        const physH = parseFloat(document.getElementById('heightInput').value);
+        const targetAspect = physW / physH;
+        const imgAspect = sourceImage.width / sourceImage.height;
+        const zoomVal = parseInt(document.getElementById('cropZoomInput').value);
+        const scaleFactor = zoomVal / 100;
+
+        let boxW, boxH;
+        if (targetAspect > imgAspect) {
+            boxW = sourceImage.width * scaleFactor;
+            boxH = boxW / targetAspect;
+        } else {
+            boxH = sourceImage.height * scaleFactor;
+            boxW = boxH * targetAspect;
+        }
+
+        cropState.w = boxW;
+        cropState.h = boxH;
+
+        if (center) {
+            cropState.x = (sourceImage.width - boxW) / 2;
+            cropState.y = (sourceImage.height - boxH) / 2;
+        } else {
+            clampCrop();
+        }
+    }
+
+    function clampCrop() {
+        if (!sourceImage) return;
+        if (cropState.x < 0) cropState.x = 0;
+        if (cropState.y < 0) cropState.y = 0;
+        if (cropState.x + cropState.w > sourceImage.width) cropState.x = sourceImage.width - cropState.w;
+        if (cropState.y + cropState.h > sourceImage.height) cropState.y = sourceImage.height - cropState.h;
+    }
+
+    function drawEditor() {
+        cropCtx.filter = 'none';
+        cropCtx.fillStyle = "#222";
+        cropCtx.fillRect(0,0, cropCanvas.width, cropCanvas.height);
+
+        if (!sourceImage) {
+            cropCtx.fillStyle = "#555";
+            cropCtx.font = "20px sans-serif";
+            cropCtx.textAlign = "center";
+            cropCtx.fillText("No Image Uploaded", 300, 300);
+            return;
+        }
+
+        const contrastVal = document.getElementById('contrastInput').value;
+        const invertVal = document.getElementById('invertInput').checked ? 100 : 0;
+        
+        const canvasAspect = cropCanvas.width / cropCanvas.height;
+        const imgAspect = sourceImage.width / sourceImage.height;
+        let drawW, drawH, offsetX, offsetY;
+        
+        if (imgAspect > canvasAspect) {
+            drawW = cropCanvas.width;
+            drawH = cropCanvas.width / imgAspect;
+            offsetX = 0;
+            offsetY = (cropCanvas.height - drawH) / 2;
+        } else {
+            drawH = cropCanvas.height;
+            drawW = cropCanvas.height * imgAspect;
+            offsetY = 0;
+            offsetX = (cropCanvas.width - drawW) / 2;
+        }
+
+        // 1. Draw Background
+        cropCtx.filter = `grayscale(100%) contrast(${contrastVal}%) invert(${invertVal}%)`;
+        cropCtx.drawImage(sourceImage, offsetX, offsetY, drawW, drawH);
+        cropCtx.filter = 'none';
+        cropCtx.fillStyle = "rgba(0,0,0,0.6)";
+        cropCtx.fillRect(0, 0, cropCanvas.width, cropCanvas.height);
+
+        // Screen Coords
+        const scaleX = drawW / sourceImage.width;
+        const scaleY = drawH / sourceImage.height;
+        const screenX = offsetX + (cropState.x * scaleX);
+        const screenY = offsetY + (cropState.y * scaleY);
+        const screenW = cropState.w * scaleX;
+        const screenH = cropState.h * scaleY;
+
+        // 2. Draw Crop Area
+        cropCtx.save();
+        cropCtx.beginPath();
+        const shape = document.getElementById('shapeSelect').value;
+        const physW = parseFloat(document.getElementById('widthInput').value);
+        const physH = parseFloat(document.getElementById('heightInput').value);
+        const pxPerMm = screenW / physW;
+        
+        if (shape === 'circle') {
+            cropCtx.ellipse(screenX + screenW/2, screenY + screenH/2, screenW/2, screenH/2, 0, 0, 2 * Math.PI);
+        } else {
+            const radiusMm = parseFloat(document.getElementById('radiusInput').value);
+            const radiusPx = radiusMm * pxPerMm;
+            cropCtx.roundRect(screenX, screenY, screenW, screenH, radiusPx);
+        }
+
+        // --- HOLE VISUALIZATION ---
+        const hasHole = document.getElementById('holeCheck').checked;
+        if (hasHole) {
+            const holeSizeMm = parseFloat(document.getElementById('holeSizeInput').value);
+            const holeRadiusPx = (holeSizeMm / 2) * pxPerMm;
+            const marginMm = 3; 
+            const marginPx = marginMm * pxPerMm;
+            
+            let holeCenterX = screenX + screenW/2;
+            let holeCenterY;
+
+            if (shape === 'rect') {
+                 holeCenterY = screenY + marginPx + holeRadiusPx;
+            } else {
+                 holeCenterY = screenY + marginPx + holeRadiusPx;
+            }
+
+            cropCtx.arc(holeCenterX, holeCenterY, holeRadiusPx, 0, Math.PI*2, true);
+        }
+
+        cropCtx.clip();
+        
+        cropCtx.filter = `grayscale(100%) contrast(${contrastVal}%) invert(${invertVal}%)`;
+        cropCtx.drawImage(sourceImage, offsetX, offsetY, drawW, drawH);
+        cropCtx.restore();
+
+        // Stroke
+        cropCtx.strokeStyle = "#4db8ff";
+        cropCtx.lineWidth = 3;
+        cropCtx.beginPath();
+        if (shape === 'circle') {
+            cropCtx.ellipse(screenX + screenW/2, screenY + screenH/2, screenW/2, screenH/2, 0, 0, 2 * Math.PI);
+        } else {
+            const radiusMm = parseFloat(document.getElementById('radiusInput').value);
+            const radiusPx = radiusMm * pxPerMm;
+            cropCtx.roundRect(screenX, screenY, screenW, screenH, radiusPx);
+        }
+        cropCtx.stroke();
+    }
+
+    // --- Mouse Inputs ---
+    function onMouseDown(e) {
+        if (!sourceImage) return;
+        isDragging = true;
+        dragStart = { x: e.clientX, y: e.clientY };
+        cropStart = { x: cropState.x, y: cropState.y };
+    }
+    function onMouseMove(e) {
+        if (!isDragging || !sourceImage) return;
+        const dxPx = e.clientX - dragStart.x; 
+        const dyPx = e.clientY - dragStart.y;
+        
+        const rect = cropCanvas.getBoundingClientRect();
+        const canvasAspect = cropCanvas.width / cropCanvas.height;
+        const imgAspect = sourceImage.width / sourceImage.height;
+        let drawW;
+        if (imgAspect > canvasAspect) drawW = rect.width;
+        else drawW = rect.height * imgAspect;
+        
+        const scaleFactor = sourceImage.width / drawW; 
+
+        cropState.x = cropStart.x + (dxPx * scaleFactor);
+        cropState.y = cropStart.y + (dyPx * scaleFactor);
+        
+        clampCrop();
+        drawEditor();
+    }
+    function onMouseUp() {
+        if (isDragging) {
+            isDragging = false;
+            processCropAndGen(); 
+        }
+    }
+
+    // --- 3D Generation Logic ---
+
+    function processCropAndGen() {
+        if (!sourceImage) {
+            updateGeometry(); 
+            return;
+        }
+
+        const widthMm = parseFloat(document.getElementById('widthInput').value);
+        const heightMm = parseFloat(document.getElementById('heightInput').value);
+        const shapeType = document.getElementById('shapeSelect').value;
+
+        // 1. Setup Canvas with High Quality smoothing
+        const tempCanvas = document.createElement('canvas');
+        tempCanvas.width = MESH_RESOLUTION;
+        tempCanvas.height = MESH_RESOLUTION;
+        const ctx = tempCanvas.getContext('2d');
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
+
+        // 2. Generate HEIGHT DATA
+        const contrastVal = document.getElementById('contrastInput').value;
+        const invertVal = document.getElementById('invertInput').checked ? 100 : 0;
+        
+        ctx.filter = `grayscale(100%) contrast(${contrastVal}%) invert(${invertVal}%)`;
+        ctx.drawImage(sourceImage, cropState.x, cropState.y, cropState.w, cropState.h, 0, 0, MESH_RESOLUTION, MESH_RESOLUTION);
+
+        const imgData = ctx.getImageData(0, 0, MESH_RESOLUTION, MESH_RESOLUTION).data;
+        canvasData = new Float32Array(MESH_RESOLUTION * MESH_RESOLUTION);
+        for (let i = 0; i < imgData.length; i += 4) {
+            canvasData[i/4] = imgData[i] / 255.0; 
+        }
+
+        updateGeometry();
+    }
+
+    function updateGeometry() {
+        if (mainMesh) {
+            scene.remove(mainMesh);
+            mainMesh.traverse(c => {
+                if(c.geometry) c.geometry.dispose();
+                if(c.material) c.material.dispose();
+            });
+        }
+
+        const width = parseFloat(document.getElementById('widthInput').value);
+        const height = parseFloat(document.getElementById('heightInput').value);
+        const baseThick = parseFloat(document.getElementById('baseThickInput').value);
+        const bumpThick = parseFloat(document.getElementById('bumpThickInput').value);
+        const radius = parseFloat(document.getElementById('radiusInput').value);
+        const shapeType = document.getElementById('shapeSelect').value;
+        
+        const hasHole = document.getElementById('holeCheck').checked;
+        const holeDiam = parseFloat(document.getElementById('holeSizeInput').value);
+        const holeRadius = holeDiam / 2;
+        
+        const margin = 3; 
+        let holeY = 0;
+        
+        if (shapeType === 'rect') {
+            holeY = (height / 2) - margin - holeRadius;
+        } else {
+            holeY = (Math.min(width,height)/2) - margin - holeRadius;
+        }
+
+        mainMesh = new THREE.Group();
+
+        // 1. BASE GEOMETRY (Fixed Radius Math)
+        const shape = new THREE.Shape();
+        if (shapeType === 'rect') {
+            const x = -width/2, y = -height/2;
+            const w = width, h = height;
+            const r = Math.min(radius, w/2, h/2); 
+
+            // Use ABSARC for True Circular Arcs to match the relief math
+            shape.moveTo(x, y + r);
+            shape.lineTo(x, y + h - r);
+            shape.absarc(x + r, y + h - r, r, Math.PI, Math.PI / 2, true); // Top Left
+            shape.lineTo(x + w - r, y + h);
+            shape.absarc(x + w - r, y + h - r, r, Math.PI / 2, 0, true); // Top Right
+            shape.lineTo(x + w, y + r);
+            shape.absarc(x + w - r, y + r, r, 0, -Math.PI / 2, true); // Bottom Right
+            shape.lineTo(x + r, y);
+            shape.absarc(x + r, y + r, r, -Math.PI / 2, -Math.PI, true); // Bottom Left
+        } else {
+            const r = Math.min(width, height)/2;
+            shape.absarc(0, 0, r, 0, Math.PI * 2, false);
+        }
+
+        if (hasHole) {
+            const holePath = new THREE.Path();
+            holePath.absarc(0, holeY, holeRadius, 0, Math.PI * 2, true);
+            shape.holes.push(holePath);
+        }
+
+        const extrudeSettings = { steps: 1, depth: baseThick, bevelEnabled: false, curveSegments: 64 };
+        const baseGeo = new THREE.ExtrudeGeometry(shape, extrudeSettings);
+        baseGeo.translate(0, 0, -baseThick);
+        const baseMat = new THREE.MeshStandardMaterial({ color: 0x444444, roughness: 0.5 });
+        const baseMesh = new THREE.Mesh(baseGeo, baseMat);
+        mainMesh.add(baseMesh);
+
+        // 2. RELIEF GEOMETRY 
+        if (canvasData) {
+            const res = MESH_RESOLUTION;
+            const numVertices = res * res;
+            const fullPos = new Float32Array(numVertices * 2 * 3); 
+            const gridMask = new Uint8Array(res * res);
+            
+            const halfW = width / 2;
+            const halfH = height / 2;
+            const stepX = width / (res - 1);
+            const stepY = height / (res - 1);
+
+            // Shape Logic (Includes Hole Logic)
+            const isInsideShape = (xPos, yPos) => {
+                 // Check Hole First
+                 if (hasHole) {
+                     const dx = xPos - 0; // x centered
+                     const dy = yPos - holeY;
+                     if (Math.sqrt(dx*dx + dy*dy) < holeRadius) return false;
+                 }
+
+                 if (shapeType === 'circle') {
+                    const nx = xPos / halfW;
+                    const ny = yPos / halfH;
+                    return (nx*nx + ny*ny) <= 1.0; 
+                 } else {
+                    const r = Math.min(radius, width/2, height/2);
+                    const absX = Math.abs(xPos);
+                    const absY = Math.abs(yPos);
+                    const xLim = halfW - r;
+                    const yLim = halfH - r;
+                    if (absX > halfW || absY > halfH) return false;
+                    if (absX > xLim && absY > yLim) {
+                        const d = Math.sqrt(Math.pow(absX - xLim, 2) + Math.pow(absY - yLim, 2));
+                        return d <= r;
+                    }
+                    return true;
+                 }
+            };
+
+            for (let y = 0; y < res; y++) {
+                for (let x = 0; x < res; x++) {
+                    const idx = y * res + x;
+                    
+                    const pX = -halfW + (x * stepX);
+                    const pY = -halfH + (y * stepY);
+                    
+                    const imgRow = (res - 1) - y;
+                    const imgIdx = imgRow * res + x;
+
+                    if (isInsideShape(pX, pY)) {
+                        gridMask[idx] = 1;
+                        const val = canvasData[imgIdx] || 0; 
+                        
+                        // Top Vertex
+                        fullPos[idx*3] = pX;
+                        fullPos[idx*3+1] = pY;
+                        fullPos[idx*3+2] = val * bumpThick; 
+
+                        // Bottom Vertex
+                        const bIdx = idx + numVertices;
+                        fullPos[bIdx*3] = pX;
+                        fullPos[bIdx*3+1] = pY;
+                        fullPos[bIdx*3+2] = -0.05; 
+                    } else {
+                        gridMask[idx] = 0;
+                    }
+                }
+            }
+
+            const indices = [];
+            const getIdx = (x, y, isTop) => (y * res + x) + (isTop ? 0 : numVertices);
+            const isValidBlock = (x,y) => {
+                if(x<0||y<0||x>=res-1||y>=res-1) return false;
+                return gridMask[y*res+x] && gridMask[y*res+(x+1)] && gridMask[(y+1)*res+x] && gridMask[(y+1)*res+(x+1)];
+            };
+
+            for (let y = 0; y < res - 1; y++) {
+                for (let x = 0; x < res - 1; x++) {
+                    if (!isValidBlock(x,y)) continue;
+
+                    // Surfaces
+                    const t1=getIdx(x,y,true), t2=getIdx(x+1,y,true), t3=getIdx(x,y+1,true), t4=getIdx(x+1,y+1,true);
+                    indices.push(t1, t2, t3); indices.push(t2, t4, t3);
+                    
+                    const b1=getIdx(x,y,false), b2=getIdx(x+1,y,false), b3=getIdx(x,y+1,false), b4=getIdx(x+1,y+1,false);
+                    indices.push(b1, b3, b2); indices.push(b2, b3, b4);
+
+                    // Walls
+                    if (!isValidBlock(x+1, y)) {
+                        const rt1 = getIdx(x+1, y, true), rt2 = getIdx(x+1, y+1, true);
+                        const rb1 = getIdx(x+1, y, false), rb2 = getIdx(x+1, y+1, false);
+                        indices.push(rt1, rb1, rb2); indices.push(rt1, rb2, rt2);
+                    }
+                    if (!isValidBlock(x-1, y)) {
+                        const lt1 = getIdx(x, y, true), lt2 = getIdx(x, y+1, true);
+                        const lb1 = getIdx(x, y, false), lb2 = getIdx(x, y+1, false);
+                        indices.push(lt1, lt2, lb2); indices.push(lt1, lb2, lb1);
+                    }
+                    if (!isValidBlock(x, y+1)) {
+                        const tt1 = getIdx(x, y+1, true), tt2 = getIdx(x+1, y+1, true);
+                        const tb1 = getIdx(x, y+1, false), tb2 = getIdx(x+1, y+1, false);
+                        indices.push(tt1, tb1, tb2); indices.push(tt1, tb2, tt2);
+                    }
+                    if (!isValidBlock(x, y-1)) {
+                        const bt1 = getIdx(x, y, true), bt2 = getIdx(x+1, y, true);
+                        const bb1 = getIdx(x, y, false), bb2 = getIdx(x+1, y, false);
+                        indices.push(bt1, bt2, bb2); indices.push(bt1, bb2, bb1);
+                    }
+                }
+            }
+
+            const geometry = new THREE.BufferGeometry();
+            geometry.setAttribute('position', new THREE.BufferAttribute(fullPos, 3));
+            geometry.setIndex(indices);
+            geometry.computeVertexNormals();
+
+            const reliefMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.3 });
+            const reliefMesh = new THREE.Mesh(geometry, reliefMat);
+            mainMesh.add(reliefMesh);
+        }
+
+        scene.add(mainMesh);
+        updatePrintInfo();
+    }
+
+    function updatePrintInfo() {
+        const lh = parseFloat(document.getElementById('layerHeightInput').value) || 0.08;
+        const baseT = parseFloat(document.getElementById('baseThickInput').value);
+        const bumpT = parseFloat(document.getElementById('bumpThickInput').value);
+        if(!canvasData) { document.getElementById('printInfo').innerHTML = "Upload an image."; return; }
+        const baseLayers = Math.ceil(baseT / lh);
+        document.getElementById('printInfo').innerHTML = `
+            <div><strong>Total Height:</strong> ${(baseT + bumpT).toFixed(2)}mm</div>
+            <hr style="border:0; border-top:1px solid #555; margin:5px 0;">
+            <div class="highlight">Filament Change:</div>
+            <div>Pause at start of <strong>Layer ${baseLayers + 1}</strong>.</div>
+        `;
+    }
+
+    function exportSTL() {
+        if (!mainMesh) return;
+        document.getElementById('loading').style.display = 'flex';
+        setTimeout(() => {
+            const result = exporter.parse(mainMesh, { binary: true });
+            const blob = new Blob([result], { type: 'application/octet-stream' });
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            link.download = 'bookmark_v5.4_ui_update.stl';
+            link.click();
+            document.getElementById('loading').style.display = 'none';
+        }, 100);
+    }
+
+    function onWindowResize() {
+        const w = window.innerWidth - 340;
+        camera.aspect = w / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(w, window.innerHeight);
+    }
+
+    function animate() {
+        requestAnimationFrame(animate);
+        controls.update();
+        renderer.render(scene, camera);
+    }
+
+    init();
+</script>
+</body>
+</html>
