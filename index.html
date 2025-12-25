@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>3D Bookmark Creator - v5.4 (UI Tweak)</title>
+    <title>3D Bookmark Creator - v5.6 (Realistic Preview)</title>
     <style>
         body { margin: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; overflow: hidden; background-color: #1a1a1a; color: #eee; }
         
@@ -80,7 +80,7 @@
 
 <div id="sidebar">
     <div id="scroll-container">
-        <h2>Bookmark Creator v5.4</h2>
+        <h2>Bookmark Creator v5.6</h2>
         
         <div class="control-group">
             <label>1. Upload Image</label>
@@ -199,19 +199,28 @@
 
     function init3D() {
         scene = new THREE.Scene();
-        scene.background = new THREE.Color(0x333333);
+        scene.background = new THREE.Color(0x222222);
         
-        const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+        // Lighting Setup
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.4);
         scene.add(ambientLight);
-        const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
-        dirLight.position.set(50, 50, 100);
+        
+        const dirLight = new THREE.DirectionalLight(0xffffff, 0.9);
+        dirLight.position.set(50, 80, 100);
+        dirLight.castShadow = true;
         scene.add(dirLight);
+
+        const fillLight = new THREE.DirectionalLight(0xbbaaff, 0.3);
+        fillLight.position.set(-50, 0, 50);
+        scene.add(fillLight);
 
         camera = new THREE.PerspectiveCamera(45, (window.innerWidth-340) / window.innerHeight, 0.1, 1000);
         camera.position.set(0, -100, 150);
 
         renderer = new THREE.WebGLRenderer({ antialias: true });
         renderer.setSize(window.innerWidth - 340, window.innerHeight);
+        renderer.shadowMap.enabled = true;
+        renderer.shadowMap.type = THREE.PCFSoftShadowMap;
         document.getElementById('viewport').appendChild(renderer.domElement);
 
         controls = new THREE.OrbitControls(camera, renderer.domElement);
@@ -538,23 +547,22 @@
 
         mainMesh = new THREE.Group();
 
-        // 1. BASE GEOMETRY (Fixed Radius Math)
+        // 1. BASE GEOMETRY (Solid Black Plastic)
         const shape = new THREE.Shape();
         if (shapeType === 'rect') {
             const x = -width/2, y = -height/2;
             const w = width, h = height;
             const r = Math.min(radius, w/2, h/2); 
 
-            // Use ABSARC for True Circular Arcs to match the relief math
             shape.moveTo(x, y + r);
             shape.lineTo(x, y + h - r);
-            shape.absarc(x + r, y + h - r, r, Math.PI, Math.PI / 2, true); // Top Left
+            shape.absarc(x + r, y + h - r, r, Math.PI, Math.PI / 2, true); 
             shape.lineTo(x + w - r, y + h);
-            shape.absarc(x + w - r, y + h - r, r, Math.PI / 2, 0, true); // Top Right
+            shape.absarc(x + w - r, y + h - r, r, Math.PI / 2, 0, true); 
             shape.lineTo(x + w, y + r);
-            shape.absarc(x + w - r, y + r, r, 0, -Math.PI / 2, true); // Bottom Right
+            shape.absarc(x + w - r, y + r, r, 0, -Math.PI / 2, true); 
             shape.lineTo(x + r, y);
-            shape.absarc(x + r, y + r, r, -Math.PI / 2, -Math.PI, true); // Bottom Left
+            shape.absarc(x + r, y + r, r, -Math.PI / 2, -Math.PI, true); 
         } else {
             const r = Math.min(width, height)/2;
             shape.absarc(0, 0, r, 0, Math.PI * 2, false);
@@ -569,15 +577,18 @@
         const extrudeSettings = { steps: 1, depth: baseThick, bevelEnabled: false, curveSegments: 64 };
         const baseGeo = new THREE.ExtrudeGeometry(shape, extrudeSettings);
         baseGeo.translate(0, 0, -baseThick);
-        const baseMat = new THREE.MeshStandardMaterial({ color: 0x444444, roughness: 0.5 });
+        
+        // Base is now Dark Grey / Black
+        const baseMat = new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 0.6 });
         const baseMesh = new THREE.Mesh(baseGeo, baseMat);
         mainMesh.add(baseMesh);
 
-        // 2. RELIEF GEOMETRY 
+        // 2. RELIEF GEOMETRY (Simulating Translucency)
         if (canvasData) {
             const res = MESH_RESOLUTION;
             const numVertices = res * res;
             const fullPos = new Float32Array(numVertices * 2 * 3); 
+            const fullColor = new Float32Array(numVertices * 2 * 3); // For Vertex Colors
             const gridMask = new Uint8Array(res * res);
             
             const halfW = width / 2;
@@ -585,15 +596,12 @@
             const stepX = width / (res - 1);
             const stepY = height / (res - 1);
 
-            // Shape Logic (Includes Hole Logic)
             const isInsideShape = (xPos, yPos) => {
-                 // Check Hole First
                  if (hasHole) {
-                     const dx = xPos - 0; // x centered
+                     const dx = xPos - 0; 
                      const dy = yPos - holeY;
                      if (Math.sqrt(dx*dx + dy*dy) < holeRadius) return false;
                  }
-
                  if (shapeType === 'circle') {
                     const nx = xPos / halfW;
                     const ny = yPos / halfH;
@@ -627,16 +635,35 @@
                         gridMask[idx] = 1;
                         const val = canvasData[imgIdx] || 0; 
                         
+                        // HEIGHT CALCULATION
+                        const zHeight = val * bumpThick;
+
+                        // COLOR CALCULATION (Simulate Translucency)
+                        // Thin (val near 0) = Darker (shows base)
+                        // Thick (val near 1) = Whiter (opaque)
+                        // We lerp from dark grey (0.15) to pure white (1.0)
+                        const brightness = 0.15 + (0.85 * val); 
+
                         // Top Vertex
                         fullPos[idx*3] = pX;
                         fullPos[idx*3+1] = pY;
-                        fullPos[idx*3+2] = val * bumpThick; 
+                        fullPos[idx*3+2] = zHeight; 
+
+                        fullColor[idx*3]   = brightness; // R
+                        fullColor[idx*3+1] = brightness; // G
+                        fullColor[idx*3+2] = brightness; // B
 
                         // Bottom Vertex
                         const bIdx = idx + numVertices;
                         fullPos[bIdx*3] = pX;
                         fullPos[bIdx*3+1] = pY;
                         fullPos[bIdx*3+2] = -0.05; 
+                        
+                        // Bottom vertices (sides) should match top color to prevent weird gradients on walls
+                        fullColor[bIdx*3]   = brightness;
+                        fullColor[bIdx*3+1] = brightness;
+                        fullColor[bIdx*3+2] = brightness;
+
                     } else {
                         gridMask[idx] = 0;
                     }
@@ -654,14 +681,12 @@
                 for (let x = 0; x < res - 1; x++) {
                     if (!isValidBlock(x,y)) continue;
 
-                    // Surfaces
                     const t1=getIdx(x,y,true), t2=getIdx(x+1,y,true), t3=getIdx(x,y+1,true), t4=getIdx(x+1,y+1,true);
                     indices.push(t1, t2, t3); indices.push(t2, t4, t3);
                     
                     const b1=getIdx(x,y,false), b2=getIdx(x+1,y,false), b3=getIdx(x,y+1,false), b4=getIdx(x+1,y+1,false);
                     indices.push(b1, b3, b2); indices.push(b2, b3, b4);
 
-                    // Walls
                     if (!isValidBlock(x+1, y)) {
                         const rt1 = getIdx(x+1, y, true), rt2 = getIdx(x+1, y+1, true);
                         const rb1 = getIdx(x+1, y, false), rb2 = getIdx(x+1, y+1, false);
@@ -679,7 +704,7 @@
                     }
                     if (!isValidBlock(x, y-1)) {
                         const bt1 = getIdx(x, y, true), bt2 = getIdx(x+1, y, true);
-                        const bb1 = getIdx(x, y, false), bb2 = getIdx(x+1, y, false);
+                        const bb1 = getIdx(x, y, false), bb2 = getIdx(x, y, false);
                         indices.push(bt1, bt2, bb2); indices.push(bt1, bb2, bb1);
                     }
                 }
@@ -687,10 +712,16 @@
 
             const geometry = new THREE.BufferGeometry();
             geometry.setAttribute('position', new THREE.BufferAttribute(fullPos, 3));
+            geometry.setAttribute('color', new THREE.BufferAttribute(fullColor, 3));
             geometry.setIndex(indices);
             geometry.computeVertexNormals();
 
-            const reliefMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.3 });
+            // USE VERTEX COLORS for the realistic effect
+            const reliefMat = new THREE.MeshStandardMaterial({ 
+                vertexColors: true, 
+                roughness: 0.5,
+                metalness: 0.1
+            });
             const reliefMesh = new THREE.Mesh(geometry, reliefMat);
             mainMesh.add(reliefMesh);
         }
@@ -709,7 +740,8 @@
             <div><strong>Total Height:</strong> ${(baseT + bumpT).toFixed(2)}mm</div>
             <hr style="border:0; border-top:1px solid #555; margin:5px 0;">
             <div class="highlight">Filament Change:</div>
-            <div>Pause at start of <strong>Layer ${baseLayers + 1}</strong>.</div>
+            <div>Start with <strong>Black/Dark</strong>.</div>
+            <div>Pause & swap to <strong>White</strong> at start of <strong>Layer ${baseLayers + 1}</strong>.</div>
         `;
     }
 
@@ -721,7 +753,7 @@
             const blob = new Blob([result], { type: 'application/octet-stream' });
             const link = document.createElement('a');
             link.href = URL.createObjectURL(blob);
-            link.download = 'bookmark_v5.4_ui_update.stl';
+            link.download = 'bookmark_v5.6_realistic.stl';
             link.click();
             document.getElementById('loading').style.display = 'none';
         }, 100);
